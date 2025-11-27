@@ -7,6 +7,8 @@ import { StatBars } from "./stat-bars"
 import { GameClock } from "./game-clock"
 import { LocationChoiceModal } from "./location-choice-modal"
 import { getRandomLocationEvent, type LocationEvent, type LocationChoice } from "./game-events"
+import { ActionCardModal } from "./action-card-modal"
+import { ACTION_CARDS, type ActionCard } from "./action-card-data"
 import type { GameOverReason } from "@/app/page"
 import type { WeeklySchedule } from "./schedule-planner"
 
@@ -20,6 +22,7 @@ interface GameScreenProps {
 
 const YEAR_DURATION = 30000 // 30 seconds per year
 const EVENT_INTERVAL = 6000 // Event every 6 seconds
+const ACTION_CARD_INTERVAL = 15000 // Action card every 15 seconds
 
 const activities = [
   { key: "study" as const, effects: { happiness: -0.3, gpa: 1.5, social: -0.2 } },
@@ -57,7 +60,13 @@ export function GameScreen({ year, schedule, initialStats, onYearComplete, onGam
 
   const [stats, setStats] = useState(baselineStats)
   const [yearProgress, setYearProgress] = useState(0)
+  
+  // Existing Event State
   const [currentEvent, setCurrentEvent] = useState<LocationEvent | null>(null)
+  
+  // New Action Card State
+  const [currentActionCard, setCurrentActionCard] = useState<ActionCard | null>(null)
+
   const [characterPos, setCharacterPos] = useState({ x: 85, y: 40 })
   const [currentLocation, setCurrentLocation] = useState<LocationId>("residence")
   const [isWalking, setIsWalking] = useState(false)
@@ -65,9 +74,12 @@ export function GameScreen({ year, schedule, initialStats, onYearComplete, onGam
   const [recentEvents, setRecentEvents] = useState<string[]>([])
   const [highlightedLocations, setHighlightedLocations] = useState<string[]>([])
 
-  const isPaused = currentEvent !== null
+  // Pause if either standard event OR action card is active
+  const isPaused = currentEvent !== null || currentActionCard !== null
+  
   const gameLoopRef = useRef<NodeJS.Timeout | null>(null)
   const eventTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const actionCardTimerRef = useRef<NodeJS.Timeout | null>(null)
   const yearCompletedRef = useRef(false)
 
   // Calculate mood based on average stats
@@ -111,13 +123,13 @@ export function GameScreen({ year, schedule, initialStats, onYearComplete, onGam
     }
   }, [isPaused, onYearComplete, stats])
 
+  // Standard Event Loop (Every 6s)
   useEffect(() => {
     if (isPaused || yearCompletedRef.current) return
 
     const scheduleNextEvent = () => {
       const event = getRandomLocationEvent(recentEvents, year)
       setRecentEvents((prev) => [...prev.slice(-3), event.id])
-      // Highlight the locations that are choices
       setHighlightedLocations(event.choices.map((c) => c.locationId))
       setCurrentEvent(event)
     }
@@ -127,7 +139,24 @@ export function GameScreen({ year, schedule, initialStats, onYearComplete, onGam
     return () => {
       if (eventTimerRef.current) clearTimeout(eventTimerRef.current)
     }
-  }, [isPaused, recentEvents, year, currentEvent])
+  }, [isPaused, recentEvents, year])
+
+  // NEW: Action Card Loop (Every 15s)
+  useEffect(() => {
+    if (isPaused || yearCompletedRef.current) return
+
+    const scheduleNextActionCard = () => {
+      // Pick a random card from the list
+      const randomCard = ACTION_CARDS[Math.floor(Math.random() * ACTION_CARDS.length)]
+      setCurrentActionCard(randomCard)
+    }
+
+    actionCardTimerRef.current = setTimeout(scheduleNextActionCard, ACTION_CARD_INTERVAL)
+
+    return () => {
+      if (actionCardTimerRef.current) clearTimeout(actionCardTimerRef.current)
+    }
+  }, [isPaused, yearCompletedRef])
 
   const handleChoice = useCallback(
     (choice: LocationChoice) => {
@@ -154,6 +183,7 @@ export function GameScreen({ year, schedule, initialStats, onYearComplete, onGam
     [characterPos.x],
   )
 
+  // Handle Standard Event Timeout
   const handleTimeout = useCallback(() => {
     setStats((prev) => ({
       happiness: Math.max(0, prev.happiness - 10),
@@ -163,6 +193,16 @@ export function GameScreen({ year, schedule, initialStats, onYearComplete, onGam
     setHighlightedLocations([])
     setCurrentEvent(null)
   }, [])
+
+  // NEW: Handle Action Card Completion
+  const handleActionCardComplete = (effects: { happiness?: number; gpa?: number; social?: number }) => {
+    setStats((prev) => ({
+      happiness: Math.min(100, Math.max(0, prev.happiness + (effects.happiness || 0))),
+      gpa: Math.min(100, Math.max(0, prev.gpa + (effects.gpa || 0))),
+      social: Math.min(100, Math.max(0, prev.social + (effects.social || 0))),
+    }))
+    setCurrentActionCard(null)
+  }
 
   return (
     <div className="relative h-screen w-full overflow-hidden bg-[#1a1a2e]">
@@ -193,9 +233,14 @@ export function GameScreen({ year, schedule, initialStats, onYearComplete, onGam
         </div>
       </div>
 
-      {/* Location Choice Modal with timer */}
-      {currentEvent && (
+      {/* Standard Event Modal */}
+      {currentEvent && !currentActionCard && (
         <LocationChoiceModal event={currentEvent} onChoice={handleChoice} onTimeout={handleTimeout} timeLimit={5} />
+      )}
+
+      {/* NEW: Action Card Modal */}
+      {currentActionCard && (
+        <ActionCardModal card={currentActionCard} onComplete={handleActionCardComplete} />
       )}
     </div>
   )
